@@ -25,9 +25,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $fullname = $_POST['fullname'];
     $phone = $_POST['phone'];
     $position = $_POST['position'];
+    $education = $_POST['education'];
     
-    $stmt = $pdo->prepare("INSERT INTO users (fullname, phone, position) VALUES (?, ?, ?)");
-    $stmt->execute([$fullname, $phone, $position]);
+    $stmt = $pdo->prepare("INSERT INTO users (fullname, phone, position, education) VALUES (?, ?, ?, ?)");
+    $stmt->execute([$fullname, $phone, $position, $education]);
     
     $user_id = $pdo->lastInsertId();
     $_SESSION['user_id'] = $user_id;
@@ -56,24 +57,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container">
-            <a class="navbar-brand" href="#">سیستم وزن‌دهی ماتریکس‌ها</a>
-            <div class="navbar-nav">
-                <a class="nav-link" href="admin_login.php">ورود ادمین</a>
-            </div>
-        </div>
-    </nav>
-
     <div class="container mt-5">
         <div class="row justify-content-center">
             <div class="col-md-8">
                 <div class="card">
                     <div class="card-header bg-primary text-white">
-                        <h2 class="text-center">سیستم وزن‌دهی معیارهای پروژه عمرانی</h2>
+                        <h2 class="text-center">ورود به فرآیند مقایسه و وزن دهی معیارها</h2>
                     </div>
                     <div class="card-body">
-                        <p class="lead text-center">لطفاً اطلاعات خود را وارد کنید تا فرآیند وزن‌دهی معیارها آغاز شود.
+                        <p class="lead text-center">لطفاً اطلاعات خود را وارد کنید تا فرآیند مقایسه زوجی آغاز شود.
                         </p>
 
                         <form method="post">
@@ -86,16 +78,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <input type="tel" class="form-control" id="phone" name="phone" required>
                             </div>
                             <div class="mb-3">
-                                <label for="position" class="form-label">سمت یا جایگاه:</label>
+                                <label for="education" class="form-label">تحصیلات:</label>
+                                <select class="form-select" id="education" name="education" required>
+                                    <option value="">-- انتخاب کنید --</option>
+                                    <option value="دیپلم">دیپلم</option>
+                                    <option value="فوق دیپلم">فوق دیپلم</option>
+                                    <option value="لیسانس">لیسانس</option>
+                                    <option value="فوق لیسانس">فوق لیسانس</option>
+                                    <option value="دکتری">دکتری</option>
+                                    <option value="سایر">سایر</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="position" class="form-label">جایگاه سازمانی:</label>
                                 <input type="text" class="form-control" id="position" name="position" required>
                             </div>
-                            <button type="submit" class="btn btn-primary w-100">شروع فرآیند وزن‌دهی</button>
+
+                            <a href="Help.pdf" class="btn btn-link" style="text-decoration:none">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                    <circle cx="12" cy="11" r="3" />
+                                    <line x1="12" y1="7" x2="12" y2="9" />
+                                    <line x1="12" y1="13" x2="12" y2="14" />
+                                </svg>
+                                برای آموزش نحوه تکمیل فرآیند اینجا کلیک کنید
+                            </a>
+
+                            <button type="submit" class="btn btn-primary w-100 mt-3">شروع</button>
                         </form>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+
+    <?php include('footer.php'); ?>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>

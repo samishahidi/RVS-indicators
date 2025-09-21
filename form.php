@@ -9,19 +9,6 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $user_id = $_SESSION['user_id'];
-$current_step = $_SESSION['current_step'] ?? 1;
-
-// پردازش درخواست بازگشت به مرحله قبل
-if (isset($_GET['prev']) && $_GET['prev'] == 1) {
-    if ($current_step > 1) {
-        $prev_step = $current_step - 1;
-        $stmt = $pdo->prepare("UPDATE users SET current_step = ? WHERE id = ?");
-        $stmt->execute([$prev_step, $user_id]);
-        $_SESSION['current_step'] = $prev_step;
-        header('Location: form.php');
-        exit;
-    }
-}
 
 // دریافت اطلاعات کاربر
 $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -33,113 +20,90 @@ if (!$user) {
     exit;
 }
 
-// دریافت ماتریس‌ها
-$matrices = [];
-$main_matrix_stmt = $pdo->query("SELECT * FROM matrices WHERE is_main = TRUE AND active = TRUE");
-$main_matrix = $main_matrix_stmt->fetch(PDO::FETCH_ASSOC);
+// دریافت ماتریس معیارهای اصلی
+$stmt = $pdo->query("SELECT * FROM matrices WHERE is_criteria_matrix = TRUE");
+$main_matrix = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if ($main_matrix) {
-    $matrices[] = $main_matrix;
+if (!$main_matrix) {
+    die("هیچ معیاری تعریف نشده است. لطفاً با ادمین تماس بگیرید.");
 }
 
-// دریافت ماتریس‌های زیرمعیار
-$sub_matrices_stmt = $pdo->prepare("
-    SELECT m.* 
-    FROM matrices m 
-    INNER JOIN criteria c ON m.parent_id = c.matrix_id 
-    WHERE m.is_main = FALSE AND m.active = TRUE 
-    GROUP BY m.id
-    ORDER BY c.sort_order
-");
-$sub_matrices_stmt->execute();
-$sub_matrices = $sub_matrices_stmt->fetchAll(PDO::FETCH_ASSOC);
-$matrices = array_merge($matrices, $sub_matrices);
+// دریافت معیارهای اصلی
+$stmt = $pdo->prepare("SELECT * FROM criteria WHERE matrix_id = ? ORDER BY sort_order");
+$stmt->execute([$main_matrix['id']]);
+$criteria = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// دریافت معیارهای هر ماتریس
-$criteria_by_matrix = [];
-foreach ($matrices as $matrix) {
-    $stmt = $pdo->prepare("SELECT * FROM criteria WHERE matrix_id = ? AND active = TRUE ORDER BY sort_order");
-    $stmt->execute([$matrix['id']]);
-    $criteria = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $criteria_by_matrix[$matrix['id']] = $criteria;
+if (empty($criteria)) {
+    die("هیچ معیاری تعریف نشده است. لطفاً با ادمین تماس بگیرید.");
 }
 
-// پردازش ارسال فرم
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $matrix_id = $_POST['matrix_id'];
-    $comparisons = $_POST['comparisons'];
-    
-    foreach ($comparisons as $comp) {
-        $criterion1_id = $comp['criterion1'];
-        $criterion2_id = $comp['criterion2'];
-        $value = $comp['value'];
-        
-        // بررسی وجود مقایسه قبلی
-        $stmt = $pdo->prepare("SELECT id FROM comparisons WHERE user_id = ? AND criterion1_id = ? AND criterion2_id = ? AND matrix_id = ?");
-        $stmt->execute([$user_id, $criterion1_id, $criterion2_id, $matrix_id]);
-        $existing = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if ($existing) {
-            // به روزرسانی مقایسه موجود
-            $stmt = $pdo->prepare("UPDATE comparisons SET value = ? WHERE id = ?");
-            $stmt->execute([$value, $existing['id']]);
-        } else {
-            // درج مقایسه جدید
-            $stmt = $pdo->prepare("INSERT INTO comparisons (user_id, criterion1_id, criterion2_id, value, matrix_id) VALUES (?, ?, ?, ?, ?)");
-            $stmt->execute([$user_id, $criterion1_id, $criterion2_id, $value, $matrix_id]);
-        }
-    }
-    
-    // به روزرسانی مرحله کاربر
-    $next_step = $current_step + 1;
-    if ($next_step <= count($matrices)) {
-        $stmt = $pdo->prepare("UPDATE users SET current_step = ? WHERE id = ?");
-        $stmt->execute([$next_step, $user_id]);
-        $_SESSION['current_step'] = $next_step;
-        $current_step = $next_step;
-    } else {
-        // تمام مراحل تکمیل شده‌اند
-        header('Location: results.php');
-        exit;
-    }
-}
+// تعیین سطر جاری
+$current_row = isset($_GET['row']) ? (int)$_GET['row'] : 1; // شروع از سطر 1
+$total_rows = count($criteria);
 
-// اگر تمام مراحل تکمیل شده‌اند، به صفحه نتایج هدایت شود
-if ($current_step > count($matrices)) {
+// اگر سطر جاری بیشتر از تعداد معیارهاست یا سطر اول است (هیچ مقایسه‌ای ندارد)، به نتایج هدایت شود
+if ($current_row >= $total_rows || $current_row == 0) {
+    // تکمیل فرآیند
+    $stmt = $pdo->prepare("UPDATE users SET completed = TRUE WHERE id = ?");
+    $stmt->execute([$user_id]);
     header('Location: results.php');
     exit;
 }
 
-// ماتریس فعلی
-$current_matrix = $matrices[$current_step - 1];
-$current_criteria = $criteria_by_matrix[$current_matrix['id']];
+// پردازش ارسال فرم
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $row_criterion_id = $criteria[$current_row]['id'];
+    
+    // ذخیره مقادیر سطر جاری
+    foreach ($_POST['values'] as $col_index => $value) {
+        if (!empty($value)) {
+            $col_criterion_id = $criteria[$col_index]['id'];
+            
+            // بررسی وجود مقایسه قبلی
+            $stmt = $pdo->prepare("SELECT id FROM comparisons 
+                                  WHERE user_id = ? AND criterion1_id = ? AND criterion2_id = ?");
+            $stmt->execute([$user_id, $row_criterion_id, $col_criterion_id]);
+            $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($existing) {
+                // به روزرسانی مقایسه موجود
+                $stmt = $pdo->prepare("UPDATE comparisons SET value = ? WHERE id = ?");
+                $stmt->execute([$value, $existing['id']]);
+            } else {
+                // درج مقایسه جدید
+                $stmt = $pdo->prepare("INSERT INTO comparisons (user_id, criterion1_id, criterion2_id, value, matrix_id) 
+                                      VALUES (?, ?, ?, ?, ?)");
+                $stmt->execute([$user_id, $row_criterion_id, $col_criterion_id, $value, $main_matrix['id']]);
+            }
+        }
+    }
+    
+    // رفتن به سطر بعدی
+    $next_row = $current_row + 1;
+    
+    // اگر سطر بعدی آخرین سطر است (هیچ مقایسه‌ای ندارد)، مستقیماً به نتایج برو
+    if ($next_row >= $total_rows) {
+        $stmt = $pdo->prepare("UPDATE users SET completed = TRUE WHERE id = ?");
+        $stmt->execute([$user_id]);
+        header('Location: results.php');
+        exit;
+    }
+    
+    header("Location: form.php?row=$next_row");
+    exit;
+}
 
-// دریافت مقایسه‌های قبلی کاربر برای این ماتریس
+// دریافت مقایسه‌های قبلی کاربر برای سطر جاری
 $existing_comparisons = [];
-$stmt = $pdo->prepare("SELECT * FROM comparisons WHERE user_id = ? AND matrix_id = ?");
-$stmt->execute([$user_id, $current_matrix['id']]);
+$row_criterion_id = $criteria[$current_row]['id'];
+
+$stmt = $pdo->prepare("SELECT * FROM comparisons 
+                      WHERE user_id = ? AND criterion1_id = ?");
+$stmt->execute([$user_id, $row_criterion_id]);
 $comparisons_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 foreach ($comparisons_data as $comp) {
-    $key = $comp['criterion1_id'] . '_' . $comp['criterion2_id'];
-    $existing_comparisons[$key] = $comp['value'];
-}
-
-// تولید لیست مقایسه‌های لازم (فقط مثلث بالایی ماتریس)
-$comparison_pairs = [];
-for ($i = 0; $i < count($current_criteria); $i++) {
-    for ($j = $i + 1; $j < count($current_criteria); $j++) {
-        $criterion1 = $current_criteria[$i];
-        $criterion2 = $current_criteria[$j];
-        $key = $criterion1['id'] . '_' . $criterion2['id'];
-        $value = $existing_comparisons[$key] ?? '';
-        
-        $comparison_pairs[] = [
-            'criterion1' => $criterion1,
-            'criterion2' => $criterion2,
-            'value' => $value
-        ];
-    }
+    $existing_comparisons[$comp['criterion2_id']] = $comp['value'];
 }
 ?>
 
@@ -149,7 +113,7 @@ for ($i = 0; $i < count($current_criteria); $i++) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>فرم وزن‌دهی معیارها</title>
+    <title>فرم وزن‌دهی ماتریس - سطر <?= $current_row + 1 ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
     .progress {
@@ -165,11 +129,13 @@ for ($i = 0; $i < count($current_criteria); $i++) {
         padding: 15px;
         border: 1px solid #dee2e6;
         border-radius: 5px;
+        background-color: white;
     }
 
     .comparison-label {
         font-weight: bold;
         margin-bottom: 10px;
+        color: #333;
     }
 
     .orange-text {
@@ -177,9 +143,22 @@ for ($i = 0; $i < count($current_criteria); $i++) {
         font-weight: bold;
     }
 
-    .divider {
-        border-top: 2px dashed #dee2e6;
-        margin: 20px 0;
+    .matrix-header {
+        background: linear-gradient(45deg, #007bff, #0056b3);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+    }
+
+    .navigation-buttons {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 2px solid #dee2e6;
+    }
+
+    .is-invalid {
+        border-color: #dc3545 !important;
     }
     </style>
 </head>
@@ -187,120 +166,110 @@ for ($i = 0; $i < count($current_criteria); $i++) {
 <body>
     <div class="container mt-4">
         <div class="card">
-            <div class="card-header bg-primary text-white">
-                <h4 class="card-title">فرم وزن‌دهی معیارها - مرحله <?= $current_step ?> از <?= count($matrices) ?></h4>
-
-                <a href="results.php" class="btn btn-danger">مشاهده نتایج</a>
+            <div class="matrix-header">
+                <h4 class="card-title mb-1">فرم وزن‌دهی ماتریس معیارها</h4>
+                <p class="mb-0">مقایسه معیار <?= $current_row + 1 ?> با معیارهای قبلی</p>
             </div>
-            <div class="card-body" style="background-color:#efefef">
+
+            <div class="card-body" style="background-color:#f8f9fa">
                 <!-- نوار پیشرفت -->
                 <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span>پیشرفت تکمیل فرم:</span>
+                        <span class="fw-bold"><?= round(($current_row / ($total_rows - 1)) * 100) ?>%</span>
+                    </div>
                     <div class="progress">
                         <div class="progress-bar" role="progressbar"
-                            style="width: <?= ($current_step / count($matrices)) * 100 ?>%;"
-                            aria-valuenow="<?= $current_step ?>" aria-valuemin="1"
-                            aria-valuemax="<?= count($matrices) ?>">
-                            <?= $current_step ?> از <?= count($matrices) ?>
+                            style="width: <?= ($current_row / ($total_rows - 1)) * 100 ?>%;"
+                            aria-valuenow="<?= $current_row ?>" aria-valuemin="1"
+                            aria-valuemax="<?= $total_rows - 1 ?>">
                         </div>
                     </div>
                 </div>
 
-                <h5 class="mb-3"><?= htmlspecialchars($current_matrix['name']) ?></h5>
-                <?php if (!empty($current_matrix['description'])): ?>
-                <p class="text-muted"><?= htmlspecialchars($current_matrix['description']) ?></p>
-                <?php endif; ?>
-
                 <div class="alert alert-info">
-                    <h6>راهنما:</h6>
-                    <p>لطفاً اهمیت هر معیار را نسبت به معیار دیگر با اعداد 1 تا 9 مشخص کنید:</p>
+                    <h6 class="alert-heading">📋 راهنما:</h6>
+                    <a href="Help.pdf" class="btn btn-link" style="text-decoration:none">
+                        برای آموزش نحوه تکمیل فرآیند اینجا کلیک کنید
+                    </a>
+                    <p class="mb-2 mt-2">لطفاً اهمیت <strong
+                            class="orange-text"><?= htmlspecialchars($criteria[$current_row]['name']) ?></strong> را
+                        نسبت به معیار دیگر به صورت اعداد زیر مشخص کنید:</p>
                     <ul class="mb-0">
-                        <li>1: اهمیت برابر</li>
-                        <li>3: کمی مهمتر</li>
-                        <li>5: خیلی مهمتر</li>
-                        <li>7: بسیار مهمتر</li>
-                        <li>9: به شدت مهمتر</li>
-                        <li>اعداد زوج (2,4,6,8) برای مقادیر واسطه</li>
+                        <li>1: اهمیت <strong>برابر</strong> (دو معیار کاملا هم ارزشند)</li>
+                        <li>3: <strong>کمی</strong> مهمتر (معیار ردیف نسبت به ستون کمی مهمتر است)</li>
+                        <li>5: <strong>مهمتر</strong> (معیار ردیف به طور واضح مهم تر است)</li>
+                        <li>7: <strong>خیلی</strong> مهمتر (معیار ردیف خیلی برتری دارد)</li>
+                        <li>9: <strong>بسیار</strong> مهمتر (معیار ردیف کاملا برتر است)</li>
+                        <li>اعداد زوج (2,4,6,8) ارزش های میانی برای وقتی که اهمیت دقیق بین اعداد اصلی نیاز است</li>
                     </ul>
                 </div>
 
                 <form id="comparisonForm" method="post">
-                    <input type="hidden" name="matrix_id" value="<?= $current_matrix['id'] ?>">
-
                     <div class="comparisons-container">
-                        <?php $oldMeyar = ''; ?>
-                        <?php foreach ($comparison_pairs as $index => $pair): ?>
+                        <?php for ($col = 0; $col < $current_row; $col++): ?>
+                        <?php 
+                            $col_criterion = $criteria[$col];
+                            $existing_value = $existing_comparisons[$col_criterion['id']] ?? '';
+                            ?>
 
+                        <div class="comparison-item shadow-sm">
+                            <div class="comparison-label">
+                                <span class="orange-text">مقایسه:</span>
+                                <strong><?= htmlspecialchars($criteria[$current_row]['name']) ?></strong>
+                                <span class="orange-text">نسبت به</span>
+                                <strong><?= htmlspecialchars($col_criterion['name']) ?></strong>
+                            </div>
 
-                        <?php
-                            $line = false;
-                            if($oldMeyar != $pair['criterion1']['name']){
-                                $oldMeyar = $pair['criterion1']['name'];
-                                $line = true;
-                            }
-                        ?>
-
-                        <?php
-                            if($line){
-                        ?>
-                        <div class="p-1 bg-white shadow mt-4">
-                            <?php
-                            }
-                        ?>
-
-                            <div class="comparison-item">
-                                <div class="comparison-label">
-                                    <span class="orange-text">نسبت</span>
-                                    <strong><?= htmlspecialchars($pair['criterion1']['name']) ?></strong>
-                                    <span class="orange-text">به</span>
-                                    <strong><?= htmlspecialchars($pair['criterion2']['name']) ?></strong>
-                                </div>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="comparison_<?= $index ?>">مقدار:</label>
-                                            <input type="number" class="form-control comparison-input"
-                                                id="comparison_<?= $index ?>" name="comparisons[<?= $index ?>][value]"
-                                                data-criterion1="<?= $pair['criterion1']['id'] ?>"
-                                                data-criterion2="<?= $pair['criterion2']['id'] ?>"
-                                                value="<?= $pair['value'] ?>" step="0.1" min="0.1" max="9">
-                                            <input type="hidden" name="comparisons[<?= $index ?>][criterion1]"
-                                                value="<?= $pair['criterion1']['id'] ?>">
-                                            <input type="hidden" name="comparisons[<?= $index ?>][criterion2]"
-                                                value="<?= $pair['criterion2']['id'] ?>">
-                                        </div>
+                            <div class="row align-items-center">
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label class="form-label">مقدار وزن:</label>
+                                        <input type="number" class="form-control comparison-input"
+                                            name="values[<?= $col ?>]" value="<?= $existing_value ?>" step="0.1"
+                                            min="0.1" max="9" required placeholder="عدد 1 تا 9 وارد کنید">
+                                        <div class="invalid-feedback">لطفاً عددی بین 0.1 تا 9 وارد کنید</div>
                                     </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="reciprocal_<?= $index ?>">مقدار معکوس:</label>
-                                            <input type="text" class="form-control reciprocal-value"
-                                                id="reciprocal_<?= $index ?>"
-                                                value="<?= !empty($pair['value']) ? round(1 / $pair['value'], 2) : '' ?>"
-                                                disabled>
-                                        </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label class="form-label">مقدار معکوس (محاسبه خودکار):</label>
+                                        <input type="text" class="form-control reciprocal-value"
+                                            value="<?= !empty($existing_value) ? round(1 / $existing_value, 2) : '' ?>"
+                                            disabled readonly>
                                     </div>
                                 </div>
                             </div>
 
-
-                            <?php
-                            if(!$line){
-                            ?>
+                            <?php if (!empty($col_criterion['description'])): ?>
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    <strong>توضیحات <?= htmlspecialchars($col_criterion['name']) ?>:</strong>
+                                    <?= htmlspecialchars($col_criterion['description']) ?>
+                                </small>
+                            </div>
+                            <?php endif; ?>
                         </div>
-                        <?php
-                                }
-                            ?>
-
-                        <?php endforeach; ?>
+                        <?php endfor; ?>
                     </div>
 
-                    <div class="mt-3 d-flex justify-content-between">
-                        <?php if ($current_step > 1): ?>
-                        <a href="?prev=1" class="btn btn-info">مرحله قبل</a>
+                    <div class="navigation-buttons d-flex justify-content-between">
+                        <?php if ($current_row > 1): ?>
+                        <a href="form.php?row=<?= $current_row - 1 ?>" class="btn btn-secondary">
+                            ← بازگشت به سطر قبلی
+                        </a>
                         <?php else: ?>
-                        <span></span>
+                        <a href="index.php" class="btn btn-outline-secondary">
+                            ← بازگشت به صفحه اصلی
+                        </a>
                         <?php endif; ?>
-                        <button type="submit" class="btn btn-primary">
-                            <?= $current_step < count($matrices) ? 'ذخیره و ادامه' : 'پایان و مشاهده نتایج' ?>
+
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <?php if ($current_row < $total_rows - 1): ?>
+                            ذخیره و ادامه به سطر بعدی →
+                            <?php else: ?>
+                            تکمیل ماتریس و مشاهده نتایج
+                            <?php endif; ?>
                         </button>
                     </div>
                 </form>
@@ -308,42 +277,60 @@ for ($i = 0; $i < count($current_criteria); $i++) {
         </div>
     </div>
 
+    <?php include('footer.php'); ?>
+
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
     $(document).ready(function() {
         // محاسبه مقادیر معکوس به صورت real-time
         $('.comparison-input').on('input', function() {
             let value = parseFloat($(this).val());
-            if (isNaN(value) || value <= 0) return;
 
-            // محاسبه مقدار معکوس
-            let reciprocalValue = (1 / value).toFixed(2);
-            $(this).closest('.row').find('.reciprocal-value').val(reciprocalValue);
+            if (isNaN(value) || value <= 0) {
+                $(this).closest('.row').find('.reciprocal-value').val('');
+                $(this).removeClass('is-invalid');
+                return;
+            }
 
-            // ذخیره real-time با AJAX
-            let formData = $('#comparisonForm').serialize();
+            if (value < 0.1 || value > 9) {
+                $(this).addClass('is-invalid');
+                $(this).closest('.row').find('.reciprocal-value').val('');
+            } else {
+                $(this).removeClass('is-invalid');
+                // محاسبه مقدار معکوس
+                let reciprocalValue = (1 / value).toFixed(2);
+                $(this).closest('.row').find('.reciprocal-value').val(reciprocalValue);
+            }
+        });
 
-            $.ajax({
-                url: 'save_comparison.php',
-                type: 'POST',
-                data: formData,
-                success: function(response) {
-                    console.log('Data saved successfully');
-                },
-                error: function() {
-                    console.log('Error saving data');
+        // اعتبارسنجی فرم
+        $('#comparisonForm').on('submit', function(e) {
+            let isValid = true;
+            $('.comparison-input').each(function() {
+                let value = parseFloat($(this).val());
+                if (isNaN(value) || value < 0.1 || value > 9) {
+                    isValid = false;
+                    $(this).addClass('is-invalid');
+                } else {
+                    $(this).removeClass('is-invalid');
                 }
             });
+
+            if (!isValid) {
+                e.preventDefault();
+                alert('لطفاً مقادیر معتبر بین 0.1 تا 9 وارد کنید.');
+                $('html, body').animate({
+                    scrollTop: $('.is-invalid').first().offset().top - 100
+                }, 500);
+            }
         });
+
+        // focus روی اولین input
+        $('.comparison-input').first().focus();
     });
     </script>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
 </html>
-
-<style>
-.orenge-text {
-    color: tomato;
-}
-</style>
