@@ -251,6 +251,123 @@ function calculateWeightsAndConsistency($criteria, $comparisons_array) {
 }
 
 
+function getUserComparisonMatrix($user_id, $main_matrix_id, $criteria) {
+    global $pdo;
+    
+    // دریافت مقایسه‌های کاربر
+    $stmt = $pdo->prepare("SELECT * FROM comparisons WHERE user_id = ? AND matrix_id = ?");
+    $stmt->execute([$user_id, $main_matrix_id]);
+    $comparisons = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // ایجاد آرایه مقایسه‌ها
+    $comparisons_array = [];
+    foreach ($comparisons as $comp) {
+        $key = $comp['criterion1_id'] . '_' . $comp['criterion2_id'];
+        $comparisons_array[$key] = $comp['value'];
+    }
+    
+    // ایجاد ماتریس نمایش
+    $display_matrix = [];
+    $n = count($criteria);
+    
+    // مقداردهی اولیه ماتریس نمایش
+    for ($i = 0; $i < $n; $i++) {
+        for ($j = 0; $j < $n; $j++) {
+            if ($i == $j) {
+                $display_matrix[$i][$j] = ['value' => 1, 'type' => 'diagonal'];
+            } else {
+                $criterion1_id = $criteria[$i]['id'];
+                $criterion2_id = $criteria[$j]['id'];
+                
+                $key1 = $criterion1_id . '_' . $criterion2_id;
+                $key2 = $criterion2_id . '_' . $criterion1_id;
+                
+                if (isset($comparisons_array[$key1])) {
+                    $display_matrix[$i][$j] = [
+                        'value' => $comparisons_array[$key1], 
+                        'type' => 'direct'
+                    ];
+                } elseif (isset($comparisons_array[$key2])) {
+                    $display_matrix[$i][$j] = [
+                        'value' => round(1 / $comparisons_array[$key2], 2), 
+                        'type' => 'inverse'
+                    ];
+                } else {
+                    $display_matrix[$i][$j] = [
+                        'value' => '-', 
+                        'type' => 'empty'
+                    ];
+                }
+            }
+        }
+    }
+    
+    // محاسبه اطلاعات تکمیل
+    $comparisons_needed = ($n * ($n - 1)) / 2;
+    $comparisons_done = count($comparisons);
+    $completion_percentage = $comparisons_needed > 0 ? round(($comparisons_done / $comparisons_needed) * 100) : 0;
+    $is_complete = $comparisons_done >= $comparisons_needed;
+    
+    return [
+        'matrix' => $display_matrix,
+        'comparisons_done' => $comparisons_done,
+        'comparisons_needed' => $comparisons_needed,
+        'completion_percentage' => $completion_percentage,
+        'is_complete' => $is_complete,
+        'comparisons_array' => $comparisons_array
+    ];
+}
+
+// تابع گسترش یافته برای دریافت هم نتایج و هم ماتریس
+function getUserFullResults($user_id, $main_matrix_id, $criteria) {
+    global $pdo;
+    
+    // دریافت مقایسه‌ها
+    $stmt = $pdo->prepare("SELECT * FROM comparisons WHERE user_id = ? AND matrix_id = ?");
+    $stmt->execute([$user_id, $main_matrix_id]);
+    $comparisons = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    $comparisons_array = [];
+    foreach ($comparisons as $comp) {
+        $key = $comp['criterion1_id'] . '_' . $comp['criterion2_id'];
+        $comparisons_array[$key] = $comp['value'];
+    }
+    
+    // اطلاعات ماتریس
+    $n = count($criteria);
+    $comparisons_needed = ($n * ($n - 1)) / 2;
+    $comparisons_done = count($comparisons);
+    $completion_percentage = $comparisons_needed > 0 ? round(($comparisons_done / $comparisons_needed) * 100) : 0;
+    $is_complete = $comparisons_done >= $comparisons_needed;
+    
+    // اگر ماتریس کامل نیست، فقط اطلاعات پایه را برگردان
+    if (!$is_complete) {
+        return [
+            'weights' => null,
+            'consistency' => null,
+            'matrix_info' => [
+                'comparisons_done' => $comparisons_done,
+                'comparisons_needed' => $comparisons_needed,
+                'completion_percentage' => $completion_percentage,
+                'is_complete' => $is_complete
+            ],
+            'comparisons_array' => $comparisons_array
+        ];
+    }
+    
+    // اگر کامل است، وزن‌ها و سازگاری را محاسبه کن
+    $results = calculateWeightsAndConsistency($criteria, $comparisons_array);
+    $results['matrix_info'] = [
+        'comparisons_done' => $comparisons_done,
+        'comparisons_needed' => $comparisons_needed,
+        'completion_percentage' => $completion_percentage,
+        'is_complete' => $is_complete
+    ];
+    $results['comparisons_array'] = $comparisons_array;
+    
+    return $results;
+}
+
 
 // دریافت لیست تمام کاربران
 $stmt = $pdo->query("SELECT * FROM users WHERE completed = TRUE ORDER BY created_at DESC");
@@ -284,6 +401,26 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
+    #downloadPdfBtn {
+        background: linear-gradient(45deg, #28a745, #20c997);
+        border: none;
+        transition: all 0.3s ease;
+    }
+
+    #downloadPdfBtn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+    }
+
+    #pdfContent table {
+        font-family: Tahoma, Arial, sans-serif;
+    }
+
+    #pdfContent th,
+    #pdfContent td {
+        font-size: 12px;
+    }
+
     .matrix-table {
         border-collapse: collapse;
         width: 100%;
@@ -356,8 +493,39 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
         font-weight: bold;
         font-size: 1.2rem;
     }
+
+    .table-sm th,
+    .table-sm td {
+        padding: 4px 8px;
+    }
+
+    .diagonal {
+        background-color: #e9ecef !important;
+        font-weight: bold;
+    }
+
+    .consistency-good {
+        color: #198754;
+        font-weight: bold;
+    }
+
+    .consistency-bad {
+        color: #dc3545;
+        font-weight: bold;
+    }
+
+    .user-card .table {
+        margin-bottom: 1rem;
+    }
+
+    .user-card .alert {
+        margin-bottom: 1rem;
+    }
     </style>
 </head>
+
+
+
 
 <body>
     <div class="container mt-4">
@@ -482,25 +650,56 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php foreach ($criteria as $i => $criterion1): ?>
+                                    <?php 
+                    // ایجاد یک ماتریس کامل برای نمایش
+                    $display_matrix = [];
+                    
+                    // مقداردهی اولیه ماتریس نمایش
+                    foreach ($criteria as $i => $criterion1) {
+                        foreach ($criteria as $j => $criterion2) {
+                            if ($i == $j) {
+                                $display_matrix[$i][$j] = ['value' => 1, 'type' => 'diagonal'];
+                            } else {
+                                $key1 = $criterion1['id'] . '_' . $criterion2['id'];
+                                $key2 = $criterion2['id'] . '_' . $criterion1['id'];
+                                
+                                if (isset($comparisons_array[$key1])) {
+                                    $display_matrix[$i][$j] = [
+                                        'value' => $comparisons_array[$key1], 
+                                        'type' => 'direct'
+                                    ];
+                                } elseif (isset($comparisons_array[$key2])) {
+                                    $display_matrix[$i][$j] = [
+                                        'value' => round(1 / $comparisons_array[$key2], 2), 
+                                        'type' => 'inverse'
+                                    ];
+                                } else {
+                                    $display_matrix[$i][$j] = [
+                                        'value' => '-', 
+                                        'type' => 'empty'
+                                    ];
+                                }
+                            }
+                        }
+                    }
+                    
+                    // نمایش ماتریس
+                    foreach ($criteria as $i => $criterion1): ?>
                                     <tr>
                                         <th><?= htmlspecialchars($criterion1['name']) ?></th>
-                                        <?php foreach ($criteria as $j => $criterion2): ?>
-                                        <td class="<?= $i == $j ? 'diagonal' : '' ?>">
-                                            <?php if ($i == $j): ?>
-                                            1
-                                            <?php elseif ($i < $j): ?>
-                                            <?php
-                                            $key = $criterion1['id'] . '_' . $criterion2['id'];
-                                            $value = $comparisons_array[$key] ?? '';
-                                            echo $value ?: '-';
-                                            ?>
+                                        <?php foreach ($criteria as $j => $criterion2): 
+                            $cell = $display_matrix[$i][$j];
+                        ?>
+                                        <td class="<?= $cell['type'] == 'diagonal' ? 'diagonal' : '' ?> 
+                                  <?= $cell['type'] == 'direct' ? 'bg-light' : '' ?>">
+                                            <?php if ($cell['type'] == 'diagonal'): ?>
+                                            <strong>1</strong>
+                                            <?php elseif ($cell['type'] == 'direct'): ?>
+                                            <strong class="text-primary"><?= $cell['value'] ?></strong>
+                                            <?php elseif ($cell['type'] == 'inverse'): ?>
+                                            <span class="text-success"><?= $cell['value'] ?></span>
                                             <?php else: ?>
-                                            <?php
-                                            $key = $criterion2['id'] . '_' . $criterion1['id'];
-                                            $value = isset($comparisons_array[$key]) ? (1 / $comparisons_array[$key]) : '';
-                                            echo $value ? round($value, 2) : '-';
-                                            ?>
+                                            <span class="text-muted"><?= $cell['value'] ?></span>
                                             <?php endif; ?>
                                         </td>
                                         <?php endforeach; ?>
@@ -509,6 +708,32 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                                 </tbody>
                             </table>
                         </div>
+
+                        <!-- راهنمای رنگ‌ها -->
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <div class="alert alert-light">
+                                    <h6><i class="bi bi-palette"></i> راهنمای رنگ‌ها:</h6>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <span class="badge bg-primary">مقادیر مستقیم کاربر</span>
+                                        <span class="badge bg-success">مقادیر معکوس محاسبه شده</span>
+                                        <span class="badge bg-secondary">قطر اصلی (1)</span>
+                                        <span class="badge bg-light text-dark">مقادیر خالی</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="alert alert-info">
+                                    <h6><i class="bi bi-calculator"></i> اطلاعات ماتریس:</h6>
+                                    <ul class="mb-0 small">
+                                        <li>تعداد مقایسه‌های انجام شده: <strong><?= $comparisons_done ?></strong></li>
+                                        <li>تعداد مقایسه‌های مورد نیاز: <strong><?= $comparisons_needed ?></strong></li>
+                                        <li>درصد تکمیل: <strong><?= $completion_percentage ?>%</strong></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
                         <?php else: ?>
                         <div class="alert alert-info">
                             <i class="bi bi-info-circle"></i> هنوز هیچ داده‌ای برای ماتریس وارد نشده است.
@@ -600,15 +825,27 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                     </a>
                     <?php endif; ?>
 
-                    <a href="index.php" class="btn btn-outline-secondary">
+                    <!-- دکمه جدید برای دانلود PDF -->
+                    <button type="button" class="btn btn-success btn-lg me-3" id="downloadPdfBtn">
+                        <i class="bi bi-file-earmark-pdf-fill me-2"></i>
+                        دانلود PDF
+                    </button>
+
+
+
+                    <a href="index.php"
+                        class="btn <?= $consistency_data['is_consistent'] ? 'btn-outline-secondary' : 'btn-danger' ?>">
                         <i class="bi bi-house-fill me-2"></i>
-                        بازگشت به صفحه اصلی
+                        <?= $consistency_data['is_consistent'] ? 'بازگشت و اصلاح' : 'ماتریس ناسازگار است! جهت اصلاح کلیک کنید' ?>
                     </a>
+
+
                 </div>
             </div>
         </div>
 
 
+        <!-- بخش نتایج سایر کاربران -->
         <!-- بخش نتایج سایر کاربران -->
         <div class="card shadow mt-4">
             <div class="card-header bg-info text-white">
@@ -654,26 +891,52 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                             data-bs-parent="#usersAccordion">
                             <div class="card-body collapse-content">
                                 <?php
-                                    // دریافت نتایج کاربر
-                                    $user_results = getUserResults($other_user['id'], $main_matrix['id'], $criteria);
-                                    ?>
+                        // دریافت نتایج کامل کاربر
+                        $user_full_results = getUserFullResults($other_user['id'], $main_matrix['id'], $criteria);
+                        $matrix_data = getUserComparisonMatrix($other_user['id'], $main_matrix['id'], $criteria);
+                        ?>
 
-                                <?php if (!empty($user_results)): ?>
-                                <!-- وضعیت سازگاری -->
+                                <?php if ($matrix_data['comparisons_done'] > 0): ?>
+
+                                <!-- وضعیت پیشرفت -->
                                 <div
-                                    class="alert <?= $user_results['consistency']['is_consistent'] ? 'alert-success' : 'alert-danger' ?> mb-3">
+                                    class="alert <?= $matrix_data['is_complete'] ? 'alert-success' : 'alert-warning' ?> mb-3">
+                                    <h6>وضعیت پیشرفت:</h6>
+                                    <div class="row align-items-center">
+                                        <div class="col-md-6">
+                                            <strong>پیشرفت:</strong> <?= $matrix_data['completion_percentage'] ?>%
+                                            <div class="progress mt-1" style="height: 10px;">
+                                                <div class="progress-bar <?= $matrix_data['is_complete'] ? 'bg-success' : 'bg-warning' ?>"
+                                                    role="progressbar"
+                                                    style="width: <?= $matrix_data['completion_percentage'] ?>%;"
+                                                    aria-valuenow="<?= $matrix_data['completion_percentage'] ?>"
+                                                    aria-valuemin="0" aria-valuemax="100">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <small>تکمیل شده: <?= $matrix_data['comparisons_done'] ?> از
+                                                <?= $matrix_data['comparisons_needed'] ?> مقایسه</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- وضعیت سازگاری (فقط اگر ماتریس کامل باشد) -->
+                                <?php if ($matrix_data['is_complete'] && $user_full_results['consistency']): ?>
+                                <div
+                                    class="alert <?= $user_full_results['consistency']['is_consistent'] ? 'alert-success' : 'alert-danger' ?> mb-3">
                                     <h6>وضعیت سازگاری:</h6>
                                     <div class="row">
                                         <div class="col-md-3">
                                             <strong>CR:</strong>
                                             <span
-                                                class="<?= $user_results['consistency']['is_consistent'] ? 'consistency-good' : 'consistency-bad' ?>">
-                                                <?= $user_results['consistency']['cr'] * 100 ?>%
+                                                class="<?= $user_full_results['consistency']['is_consistent'] ? 'consistency-good' : 'consistency-bad' ?>">
+                                                <?= $user_full_results['consistency']['cr'] * 100 ?>%
                                             </span>
                                         </div>
                                         <div class="col-md-9">
                                             <strong>وضعیت:</strong>
-                                            <?php if ($user_results['consistency']['is_consistent']): ?>
+                                            <?php if ($user_full_results['consistency']['is_consistent']): ?>
                                             <span class="consistency-good">سازگار</span>
                                             <?php else: ?>
                                             <span class="consistency-bad">ناسازگار</span>
@@ -681,47 +944,109 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                                         </div>
                                     </div>
                                 </div>
+                                <?php endif; ?>
 
-                                <!-- وزن‌های نهایی -->
-                                <h6>وزن‌های نهایی:</h6>
-                                <div class="table-responsive">
-                                    <table class="table table-sm table-striped">
+                                <!-- ماتریس مقایسه‌های زوجی -->
+                                <h6>ماتریس مقایسه‌های زوجی:</h6>
+                                <div class="table-responsive mb-3">
+                                    <table class="table table-bordered table-sm">
                                         <thead>
                                             <tr>
-                                                <th>معیار</th>
-                                                <th>وزن</th>
-                                                <th>رتبه</th>
+                                                <th style="width: 120px">معیارها</th>
+                                                <?php foreach ($criteria as $criterion): ?>
+                                                <th class="text-center"><?= htmlspecialchars($criterion['name']) ?></th>
+                                                <?php endforeach; ?>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <?php 
-                                                    // مرتب کردن وزن‌ها
-                                                    $sorted_weights = [];
-                                                    foreach ($criteria as $i => $criterion) {
-                                                        $sorted_weights[] = [
-                                                            'criterion' => $criterion,
-                                                            'weight' => $user_results['weights'][$i]
-                                                        ];
-                                                    }
-                                                    usort($sorted_weights, function($a, $b) {
-                                                        return $b['weight'] <=> $a['weight'];
-                                                    });
-                                                    
-                                                    foreach ($sorted_weights as $rank => $item): 
-                                                    ?>
+                                            <?php foreach ($criteria as $i => $criterion1): ?>
                                             <tr>
-                                                <td><?= htmlspecialchars($item['criterion']['name']) ?></td>
-                                                <td><?= round($item['weight'], 4) ?></td>
-                                                <td><span class="badge bg-primary"><?= $rank + 1 ?></span></td>
+                                                <th><?= htmlspecialchars($criterion1['name']) ?></th>
+                                                <?php foreach ($criteria as $j => $criterion2): 
+                                            $cell = $matrix_data['matrix'][$i][$j];
+                                        ?>
+                                                <td class="text-center <?= $cell['type'] == 'diagonal' ? 'diagonal' : '' ?> 
+                                                  <?= $cell['type'] == 'direct' ? 'bg-light' : '' ?>"
+                                                    style="font-size: 0.85rem;">
+                                                    <?php if ($cell['type'] == 'diagonal'): ?>
+                                                    <strong>1</strong>
+                                                    <?php elseif ($cell['type'] == 'direct'): ?>
+                                                    <strong class="text-primary"><?= $cell['value'] ?></strong>
+                                                    <?php elseif ($cell['type'] == 'inverse'): ?>
+                                                    <span class="text-success"><?= $cell['value'] ?></span>
+                                                    <?php else: ?>
+                                                    <span class="text-muted">-</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <?php endforeach; ?>
                                             </tr>
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
                                 </div>
+
+                                <!-- راهنمای ماتریس -->
+                                <div class="alert alert-light mb-3">
+                                    <h6 class="mb-2"><i class="bi bi-info-circle"></i> راهنمای ماتریس:</h6>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <span class="badge bg-primary">مقادیر مستقیم کاربر</span>
+                                        <span class="badge bg-success">مقادیر معکوس محاسبه شده</span>
+                                        <span class="badge bg-secondary">قطر اصلی</span>
+                                        <span class="badge bg-light text-dark">مقایسه انجام نشده</span>
+                                    </div>
+                                </div>
+
+                                <!-- وزن‌های نهایی (فقط اگر ماتریس کامل باشد) -->
+                                <!-- <?php if ($matrix_data['is_complete'] && $user_full_results['weights']): ?>
+                                <h6>وزن‌های نهایی:</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-striped">
+                                        <thead>
+                                            <tr>
+                                                <th>رتبه</th>
+                                                <th>معیار</th>
+                                                <th>وزن</th>
+                                                <th>درصد</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php 
+                                    // مرتب کردن وزن‌ها
+                                    $sorted_weights = [];
+                                    foreach ($criteria as $i => $criterion) {
+                                        $sorted_weights[] = [
+                                            'criterion' => $criterion,
+                                            'weight' => $user_full_results['weights'][$i]
+                                        ];
+                                    }
+                                    usort($sorted_weights, function($a, $b) {
+                                        return $b['weight'] <=> $a['weight'];
+                                    });
+                                    
+                                    foreach ($sorted_weights as $rank => $item): 
+                                        $percentage = round($item['weight'] * 100, 2);
+                                    ?>
+                                            <tr>
+                                                <td><span class="badge bg-primary"><?= $rank + 1 ?></span></td>
+                                                <td><?= htmlspecialchars($item['criterion']['name']) ?></td>
+                                                <td><?= round($item['weight'], 4) ?></td>
+                                                <td><?= $percentage ?>%</td>
+                                            </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <?php elseif (!$matrix_data['is_complete']): ?>
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle"></i>
+                                    برای مشاهده وزن‌های نهایی، کاربر باید ماتریس را کامل تکمیل کند.
+                                </div>
+                                <?php endif; ?> -->
+
                                 <?php else: ?>
                                 <div class="alert alert-warning">
                                     <i class="bi bi-exclamation-triangle"></i>
-                                    این کاربر هنوز ماتریس را تکمیل نکرده است.
+                                    این کاربر هنوز هیچ مقایسه‌ای انجام نداده است.
                                 </div>
                                 <?php endif; ?>
                             </div>
@@ -762,6 +1087,273 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
         });
     });
     </script>
+
+
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <script>
+    document.getElementById('downloadPdfBtn').addEventListener('click', async function() {
+        const originalText = this.innerHTML;
+        this.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>در حال تولید PDF...';
+        this.disabled = true;
+
+        try {
+            // ایجاد محتوای PDF با استفاده از innerHTML مستقیم
+            const pdfContainer = document.createElement('div');
+            pdfContainer.style.width = '210mm';
+            pdfContainer.style.minHeight = '297mm';
+            pdfContainer.style.padding = '0mm';
+            pdfContainer.style.paddingTop = '0mm';
+
+            pdfContainer.style.margin = '0';
+            pdfContainer.style.fontFamily = 'Tahoma, Arial, sans-serif';
+            pdfContainer.style.direction = 'rtl';
+            pdfContainer.style.background = 'white';
+            pdfContainer.style.boxSizing = 'border-box';
+
+            // استفاده مستقیم از PHP variables در JavaScript
+            pdfContainer.innerHTML = `
+            <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px;">
+                <h1 style="color: #007bff; margin: 0; font-size: 24px;">نتایج وزن‌دهی AHP</h1>
+                <p style="color: #666; margin: 5px 0; font-size: 14px;">تاریخ تولید: ${new Date().toLocaleDateString('fa-IR')}</p>
+            </div>
+
+            <!-- اطلاعات کاربر -->
+            <div style="margin-bottom: 30px; background: #f8f9fa; padding: 15px; border-radius: 5px; border: 1px solid #ddd;">
+                <h2 style="color: #333; border-right: 4px solid #007bff; padding-right: 10px; font-size: 18px; margin-top: 0;">
+                    اطلاعات کاربر
+                </h2>
+                <table style="width: 100%; margin-top: 15px; font-size: 14px;">
+                    <tr>
+                        <td style="width: 30%; padding: 8px; font-weight: bold;">نام و نام خانوادگی:</td>
+                        <td style="padding: 8px;"><?= htmlspecialchars($user['fullname']) ?></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; font-weight: bold;">شماره همراه:</td>
+                        <td style="padding: 8px;"><?= htmlspecialchars($user['phone']) ?></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; font-weight: bold;">سمت یا جایگاه:</td>
+                        <td style="padding: 8px;"><?= htmlspecialchars($user['position']) ?></td>
+                    </tr>
+                    <?php if (!empty($user['education'])): ?>
+                    <tr>
+                        <td style="padding: 8px; font-weight: bold;">تحصیلات:</td>
+                        <td style="padding: 8px;"><?= htmlspecialchars($user['education']) ?></td>
+                    </tr>
+                    <?php endif; ?>
+                </table>
+            </div>
+
+            <?php if ($is_complete): ?>
+            <!-- وضعیت سازگاری -->
+            <!--div style="margin-bottom: 30px; padding: 15px; border: 2px solid <?= $consistency_data['is_consistent'] ? '#28a745' : '#dc3545' ?>; border-radius: 5px;">
+                <h2 style="color: #333; border-right: 4px solid <?= $consistency_data['is_consistent'] ? '#28a745' : '#dc3545' ?>; padding-right: 10px; font-size: 18px; margin-top: 0;">
+                    وضعیت سازگاری ماتریس
+                </h2>
+                <table style="width: 100%; margin-top: 15px; font-size: 14px;">
+                    <tr>
+                        <td style="width: 25%; padding: 8px; font-weight: bold;">لامبدا ماکزیمم (λmax):</td>
+                        <td style="padding: 8px; color: <?= $consistency_data['is_consistent'] ? '#28a745' : '#dc3545' ?>; font-weight: bold;"><?= $consistency_data['lambda_max'] ?></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; font-weight: bold;">شاخص سازگاری (CI):</td>
+                        <td style="padding: 8px; color: <?= $consistency_data['is_consistent'] ? '#28a745' : '#dc3545' ?>; font-weight: bold;"><?= $consistency_data['ci'] ?></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; font-weight: bold;">شاخص تصادفی (RI):</td>
+                        <td style="padding: 8px;"><?= $consistency_data['ri'] ?></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; font-weight: bold;">نسبت سازگاری (CR):</td>
+                        <td style="padding: 8px; color: <?= $consistency_data['is_consistent'] ? '#28a745' : '#dc3545' ?>; font-weight: bold;"><?= round($consistency_data['cr'] * 100, 2) ?>%</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; font-weight: bold;">وضعیت:</td>
+                        <td style="padding: 8px; color: <?= $consistency_data['is_consistent'] ? '#28a745' : '#dc3545' ?>; font-weight: bold;">
+                            <?= $consistency_data['is_consistent'] ? '✓ ماتریس سازگار است (CR ≤ 0.1)' : '✗ ماتریس ناسازگار است! (CR > 0.1)' ?>
+                        </td>
+                    </tr>
+                </table>
+            </div-->
+            <?php endif; ?>
+
+            <!-- ماتریس مقایسه‌ها -->
+            <div style="margin-bottom: 30px;">
+                <h2 style="color: #333; border-right: 4px solid #007bff; padding-right: 10px; font-size: 18px; margin-top: 0;">
+                    ماتریس مقایسه‌های زوجی
+                </h2>
+                <?php if ($comparisons_done > 0): ?>
+                <div style="overflow-x: auto; margin-top: 15px;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #ddd;">
+                        <thead>
+                            <tr>
+                                <th style="border: 1px solid #ddd; padding: 10px; background-color: #f8f9fa; width: 150px; font-weight: bold;">معیارها</th>
+                                <?php foreach ($criteria as $criterion): ?>
+                                <th style="border: 1px solid #ddd; padding: 10px; background-color: #f8f9fa; font-weight: bold;"><?= htmlspecialchars($criterion['name']) ?></th>
+                                <?php endforeach; ?>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($criteria as $i => $criterion1): ?>
+                            <tr>
+                                <th style="border: 1px solid #ddd; padding: 10px; background-color: #f8f9fa; font-weight: bold;"><?= htmlspecialchars($criterion1['name']) ?></th>
+                                <?php foreach ($criteria as $j => $criterion2): ?>
+                                <td style="border: 1px solid #ddd; padding: 10px; text-align: center; <?= $i == $j ? 'background-color: #e9ecef; font-weight: bold;' : '' ?>">
+                                    <?php if ($i == $j): ?>
+                                    <strong>1</strong>
+                                    <?php else: ?>
+                                    <?php
+                                    $key1 = $criterion1['id'] . '_' . $criterion2['id'];
+                                    $key2 = $criterion2['id'] . '_' . $criterion1['id'];
+                                    
+                                    if (isset($comparisons_array[$key1])) {
+                                        echo '<strong style="color: #007bff;">' . $comparisons_array[$key1] . '</strong>';
+                                    } elseif (isset($comparisons_array[$key2])) {
+                                        $value = 1 / $comparisons_array[$key2];
+                                        echo '<span style="color: #28a745;">' . round($value, 2) . '</span>';
+                                    } else {
+                                        echo '<span style="color: #6c757d;">-</span>';
+                                    }
+                                    ?>
+                                    <?php endif; ?>
+                                </td>
+                                <?php endforeach; ?>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php else: ?>
+                <p style="color: #666; margin-top: 15px; font-size: 14px;">هنوز هیچ داده‌ای برای ماتریس وارد نشده است.</p>
+                <?php endif; ?>
+            </div>
+
+            <?php if ($is_complete && isset($weights)): ?>
+            <!-- وزن‌های نهایی -->
+            <!--div style="margin-bottom: 30px;">
+                <h2 style="color: #333; border-right: 4px solid #28a745; padding-right: 10px; font-size: 18px; margin-top: 0;">
+                    وزن‌های نهایی معیارها
+                </h2>
+                <div style="overflow-x: auto; margin-top: 15px;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px; border: 1px solid #ddd;">
+                        <thead>
+                            <tr style="background-color: #f8f9fa;">
+                                <th style="border: 1px solid #ddd; padding: 10px; font-weight: bold;">رتبه</th>
+                                <th style="border: 1px solid #ddd; padding: 10px; font-weight: bold;">معیار</th>
+                                <th style="border: 1px solid #ddd; padding: 10px; font-weight: bold;">وزن</th>
+                                <th style="border: 1px solid #ddd; padding: 10px; font-weight: bold;">درصد</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php 
+                            $sorted_weights = [];
+                            foreach ($criteria as $i => $criterion) {
+                                $sorted_weights[] = [
+                                    'criterion' => $criterion,
+                                    'weight' => $weights[$i],
+                                    'index' => $i
+                                ];
+                            }
+                            
+                            usort($sorted_weights, function($a, $b) {
+                                return $b['weight'] <=> $a['weight'];
+                            });
+                            
+                            foreach ($sorted_weights as $rank => $item): 
+                                $criterion = $item['criterion'];
+                                $weight = $item['weight'];
+                                $percentage = round($weight * 100, 2);
+                            ?>
+                            <tr>
+                                <td style="border: 1px solid #ddd; padding: 10px; text-align: center; font-weight: bold;"><?= $rank + 1 ?></td>
+                                <td style="border: 1px solid #ddd; padding: 10px;"><?= htmlspecialchars($criterion['name']) ?></td>
+                                <td style="border: 1px solid #ddd; padding: 10px; text-align: center;"><?= round($weight, 4) ?></td>
+                                <td style="border: 1px solid #ddd; padding: 10px; text-align: center; font-weight: bold;"><?= $percentage ?>%</td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div-->
+            <?php endif; ?>
+
+            <!-- پاورقی -->
+            <div style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
+                <p>این گزارش به صورت خودکار توسط سیستم AHP تولید شده است.</p>
+            </div>
+        `;
+
+            // اضافه کردن به صفحه با موقعیت قابل مشاهده
+            pdfContainer.style.position = 'fixed';
+            pdfContainer.style.left = '50%';
+            pdfContainer.style.top = '-60%';
+            pdfContainer.style.transform = 'translate(-50%, -50%)';
+            pdfContainer.style.zIndex = '10000';
+            pdfContainer.style.boxShadow = '0 0 20px rgba(0,0,0,0.3)';
+            document.body.appendChild(pdfContainer);
+
+            // منتظر ماندن برای رندر شدن محتوا
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            const options = {
+                margin: [10, 10, 10, 10],
+                filename: 'نتایج_AHP_<?= htmlspecialchars($user['fullname']) ?>_<?= date("Y-m-d") ?>.pdf',
+                image: {
+                    type: 'jpeg',
+                    quality: 0.98
+                },
+                html2canvas: {
+                    scale: 2,
+                    useCORS: true,
+                    logging: false,
+                    width: pdfContainer.scrollWidth,
+                    height: pdfContainer.scrollHeight
+                },
+                jsPDF: {
+                    unit: 'mm',
+                    format: 'a4',
+                    orientation: 'portrait',
+                    compress: true
+                }
+            };
+
+            // تولید PDF
+            await html2pdf().set(options).from(pdfContainer).save();
+
+            // حذف محتوای موقت
+            document.body.removeChild(pdfContainer);
+
+            this.innerHTML = originalText;
+            this.disabled = false;
+
+            // نمایش پیام موفقیت
+            setTimeout(() => {
+                alert('PDF با موفقیت دانلود شد!');
+            }, 100);
+
+        } catch (error) {
+            console.error('PDF Generation Error:', error);
+
+            // حذف محتوای موقت در صورت خطا
+            const tempContent = document.querySelector('div[style*="z-index: 10000"]');
+            if (tempContent) {
+                document.body.removeChild(tempContent);
+            }
+
+            this.innerHTML = originalText;
+            this.disabled = false;
+            alert('خطا در تولید PDF. لطفاً کنسول مرورگر را بررسی کنید.');
+        }
+    });
+    </script>
+
+
+
+
+
 </body>
 
 </html>

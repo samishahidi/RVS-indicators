@@ -156,15 +156,19 @@ if (isset($_GET['user_id']) && !empty($_GET['user_id'])) {
 
         // محاسبه نتایج برای کاربر
         if ($is_complete && $n > 0) {
-            $user_results = calculateWeightsAndConsistency($criteria, $comparisons_array);
+            $user_results = calculateUserWeightsAndConsistency($criteria, $comparisons_array);
             $consistency_data = $user_results['consistency'];
         }
+
+        // ایجاد ماتریس نمایش
+        $display_matrix = getUserComparisonMatrixForDisplay($criteria, $comparisons_array);
 
         $user_results_data = [
             'criteria' => $criteria,
             'comparisons' => $comparisons_array,
+            'display_matrix' => $display_matrix,
             'weights' => $user_results['weights'] ?? [],
-            'consistency' => $consistency_data,
+            'consistency' => $consistency_data ?? [],
             'is_complete' => $is_complete,
             'comparisons_done' => $comparisons_done,
             'comparisons_needed' => $comparisons_needed
@@ -186,6 +190,141 @@ if (isset($_POST['delete_user'])) {
     header('Location: admin_results.php');
     exit;
 }
+
+
+// تابع دریافت ماتریس مقایسه‌های کاربر برای نمایش
+function getUserComparisonMatrixForDisplay($criteria, $comparisons_array) {
+    $n = count($criteria);
+    $display_matrix = [];
+    
+    // مقداردهی اولیه ماتریس نمایش
+    for ($i = 0; $i < $n; $i++) {
+        for ($j = 0; $j < $n; $j++) {
+            if ($i == $j) {
+                $display_matrix[$i][$j] = ['value' => 1, 'type' => 'diagonal'];
+            } else {
+                $criterion1_id = $criteria[$i]['id'];
+                $criterion2_id = $criteria[$j]['id'];
+                
+                $key1 = $criterion1_id . '_' . $criterion2_id;
+                $key2 = $criterion2_id . '_' . $criterion1_id;
+                
+                if (isset($comparisons_array[$key1])) {
+                    $display_matrix[$i][$j] = [
+                        'value' => $comparisons_array[$key1], 
+                        'type' => 'direct'
+                    ];
+                } elseif (isset($comparisons_array[$key2])) {
+                    $display_matrix[$i][$j] = [
+                        'value' => round(1 / $comparisons_array[$key2], 2), 
+                        'type' => 'inverse'
+                    ];
+                } else {
+                    $display_matrix[$i][$j] = [
+                        'value' => '-', 
+                        'type' => 'empty'
+                    ];
+                }
+            }
+        }
+    }
+    
+    return $display_matrix;
+}
+
+// تابع محاسبه وزن‌ها و سازگاری (همان تابع قبلی اما با نام متفاوت برای جلوگیری از تداخل)
+function calculateUserWeightsAndConsistency($criteria, $comparisons_array) {
+    $n = count($criteria);
+    $pairwise_matrix = [];
+    
+    // مقداردهی اولیه ماتریس
+    for ($i = 0; $i < $n; $i++) {
+        for ($j = 0; $j < $n; $j++) {
+            $pairwise_matrix[$i][$j] = ($i == $j) ? 1 : 0;
+        }
+    }
+
+    // پر کردن ماتریس
+    foreach ($comparisons_array as $key => $value) {
+        list($criterion1_id, $criterion2_id) = explode('_', $key);
+        
+        $index1 = -1;
+        $index2 = -1;
+        
+        foreach ($criteria as $idx => $criterion) {
+            if ($criterion['id'] == $criterion1_id) $index1 = $idx;
+            if ($criterion['id'] == $criterion2_id) $index2 = $idx;
+        }
+        
+        if ($index1 >= 0 && $index2 >= 0) {
+            $pairwise_matrix[$index1][$index2] = $value;
+            $pairwise_matrix[$index2][$index1] = 1 / $value;
+        }
+    }
+
+    // محاسبه وزن‌ها
+    $column_sums = array_fill(0, $n, 0);
+    for ($j = 0; $j < $n; $j++) {
+        for ($i = 0; $i < $n; $i++) {
+            $column_sums[$j] += $pairwise_matrix[$i][$j];
+        }
+    }
+
+    $normalized_matrix = [];
+    for ($i = 0; $i < $n; $i++) {
+        for ($j = 0; $j < $n; $j++) {
+            $normalized_matrix[$i][$j] = $pairwise_matrix[$i][$j] / $column_sums[$j];
+        }
+    }
+
+    $weights = [];
+    for ($i = 0; $i < $n; $i++) {
+        $row_sum = 0;
+        for ($j = 0; $j < $n; $j++) {
+            $row_sum += $normalized_matrix[$i][$j];
+        }
+        $weights[$i] = $row_sum / $n;
+    }
+
+    // محاسبه سازگاری
+    $weighted_sum_vector = [];
+    for ($i = 0; $i < $n; $i++) {
+        $sum = 0;
+        for ($j = 0; $j < $n; $j++) {
+            $sum += $pairwise_matrix[$i][$j] * $weights[$j];
+        }
+        $weighted_sum_vector[$i] = $sum;
+    }
+
+    $lambda_sum = 0;
+    for ($i = 0; $i < $n; $i++) {
+        $lambda_sum += $weighted_sum_vector[$i] / $weights[$i];
+    }
+    
+    $lambda_max = $lambda_sum / $n;
+    $ci = ($lambda_max - $n) / ($n - 1);
+    
+    $ri_values = [
+        1 => 0.00, 2 => 0.00, 3 => 0.58, 4 => 0.90, 5 => 1.12,
+        6 => 1.24, 7 => 1.32, 8 => 1.41, 9 => 1.45, 10 => 1.49,
+        11 => 1.51, 12 => 1.48, 13 => 1.56, 14 => 1.57, 15 => 1.59
+    ];
+    
+    $ri = $ri_values[$n] ?? 1.60;
+    $cr = $ci / $ri;
+    
+    return [
+        'weights' => $weights,
+        'consistency' => [
+            'lambda_max' => round($lambda_max, 4),
+            'ci' => round($ci, 4),
+            'ri' => round($ri, 4),
+            'cr' => round($cr, 4),
+            'is_consistent' => $cr <= 0.1
+        ]
+    ];
+}
+
 ?>
 
 <!DOCTYPE html>
@@ -487,13 +626,14 @@ if (isset($_POST['delete_user'])) {
                                 </h6>
                             </div>
                             <div class="card-body">
+                                <?php if ($user_results_data['comparisons_done'] > 0): ?>
                                 <div class="table-responsive">
                                     <table class="matrix-table table table-bordered">
                                         <thead>
                                             <tr>
                                                 <th style="width: 150px">معیارها</th>
                                                 <?php foreach ($user_results_data['criteria'] as $criterion): ?>
-                                                <th><?= htmlspecialchars($criterion['name']) ?></th>
+                                                <th class="text-center"><?= htmlspecialchars($criterion['name']) ?></th>
                                                 <?php endforeach; ?>
                                             </tr>
                                         </thead>
@@ -501,22 +641,20 @@ if (isset($_POST['delete_user'])) {
                                             <?php foreach ($user_results_data['criteria'] as $i => $criterion1): ?>
                                             <tr>
                                                 <th><?= htmlspecialchars($criterion1['name']) ?></th>
-                                                <?php foreach ($user_results_data['criteria'] as $j => $criterion2): ?>
-                                                <td class="<?= $i == $j ? 'diagonal' : '' ?>">
-                                                    <?php if ($i == $j): ?>
-                                                    1
-                                                    <?php elseif ($i < $j): ?>
-                                                    <?php
-                                                    $key = $criterion1['id'] . '_' . $criterion2['id'];
-                                                    $value = $user_results_data['comparisons'][$key] ?? '';
-                                                    echo $value ?: '-';
-                                                    ?>
+                                                <?php foreach ($user_results_data['criteria'] as $j => $criterion2): 
+                            $cell = $user_results_data['display_matrix'][$i][$j];
+                        ?>
+                                                <td class="text-center <?= $cell['type'] == 'diagonal' ? 'diagonal' : '' ?> 
+                                  <?= $cell['type'] == 'direct' ? 'bg-light' : '' ?>"
+                                                    style="font-weight: <?= $cell['type'] == 'direct' ? 'bold' : 'normal' ?>;">
+                                                    <?php if ($cell['type'] == 'diagonal'): ?>
+                                                    <strong>1</strong>
+                                                    <?php elseif ($cell['type'] == 'direct'): ?>
+                                                    <span class="text-primary"><?= $cell['value'] ?></span>
+                                                    <?php elseif ($cell['type'] == 'inverse'): ?>
+                                                    <span class="text-success"><?= $cell['value'] ?></span>
                                                     <?php else: ?>
-                                                    <?php
-                                                    $key = $criterion2['id'] . '_' . $criterion1['id'];
-                                                    $value = isset($user_results_data['comparisons'][$key]) ? (1 / $user_results_data['comparisons'][$key]) : '';
-                                                    echo $value ? round($value, 2) : '-';
-                                                    ?>
+                                                    <span class="text-muted">-</span>
                                                     <?php endif; ?>
                                                 </td>
                                                 <?php endforeach; ?>
@@ -525,6 +663,33 @@ if (isset($_POST['delete_user'])) {
                                         </tbody>
                                     </table>
                                 </div>
+
+                                <!-- راهنمای ماتریس -->
+                                <div class="alert alert-light mt-3">
+                                    <h6 class="mb-2"><i class="bi bi-info-circle"></i> راهنمای ماتریس:</h6>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                                <span class="badge bg-primary">مقادیر مستقیم کاربر</span>
+                                                <span class="badge bg-success">مقادیر معکوس محاسبه شده</span>
+                                                <span class="badge bg-secondary">قطر اصلی (1)</span>
+                                                <span class="badge bg-light text-dark">مقایسه انجام نشده</span>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="small text-muted">
+                                                <strong>تعداد مقایسه‌های وارد شده:</strong>
+                                                <?= $user_results_data['comparisons_done'] ?> از
+                                                <?= $user_results_data['comparisons_needed'] ?>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <?php else: ?>
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle"></i> کاربر هنوز هیچ مقایسه‌ای انجام نداده است.
+                                </div>
+                                <?php endif; ?>
                             </div>
                         </div>
 
