@@ -389,6 +389,65 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
     
     return calculateWeightsAndConsistency($criteria, $comparisons_array);
 }
+
+
+
+// تابع ساده‌تر برای تشخیص سلول‌های ناسازگار
+function findInconsistentCells($pairwise_matrix, $weights, $n, $criteria, $comparisons_array) {
+    $inconsistent_cells = [];
+    
+    if (empty($weights) || $n == 0) {
+        return $inconsistent_cells;
+    }
+    
+    $cell_inconsistencies = [];
+    
+    // محاسبه ناسازگاری برای هر سلول
+    for ($i = 0; $i < $n; $i++) {
+        for ($j = $i + 1; $j < $n; $j++) {
+            $criterion1_id = $criteria[$i]['id'];
+            $criterion2_id = $criteria[$j]['id'];
+            $key = $criterion1_id . '_' . $criterion2_id;
+            
+            if (isset($comparisons_array[$key])) {
+                $a_ij = $pairwise_matrix[$i][$j];
+                $w_i = $weights[$i];
+                $w_j = $weights[$j];
+                
+                if ($w_j != 0) {
+                    $expected_ratio = $w_i / $w_j;
+                    if ($expected_ratio != 0) {
+                        $inconsistency = abs($a_ij - $expected_ratio) / $expected_ratio;
+                        $cell_inconsistencies[$key] = $inconsistency;
+                    }
+                }
+            }
+        }
+    }
+    
+    // فقط سلول‌های با بیشترین ناسازگاری (بالای 75% صدک) را انتخاب کن
+    if (!empty($cell_inconsistencies)) {
+        $threshold = 0.5; // آستانه ثابت اما بالاتر
+        foreach ($cell_inconsistencies as $key => $inconsistency) {
+            if ($inconsistency > $threshold) {
+                $inconsistent_cells[$key] = ['inconsistency' => $inconsistency];
+            }
+        }
+        
+        // یا: فقط 3 سلول با بیشترین ناسازگاری
+        // arsort($cell_inconsistencies);
+        // $inconsistent_cells = array_slice($cell_inconsistencies, 0, 3, true);
+    }
+    
+    return $inconsistent_cells;
+}
+
+// محاسبه سلول‌های ناسازگار
+$inconsistent_cells = [];
+if ($is_complete && isset($weights) && !$consistency_data['is_consistent']) {
+    $inconsistent_cells = findInconsistentCells($pairwise_matrix, $weights, $n, $criteria, $comparisons_array);
+}
+
 ?>
 
 <!DOCTYPE html>
@@ -401,6 +460,26 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
+    .inconsistent-cell {
+        background-color: #dc3545 !important;
+        color: white !important;
+        font-weight: bold;
+        position: relative;
+    }
+
+    .inconsistent-cell:hover {
+        background-color: #c82333 !important;
+    }
+
+    .inconsistent-cell::after {
+        content: "!";
+        position: absolute;
+        top: 2px;
+        right: 5px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+
     #downloadPdfBtn {
         background: linear-gradient(45deg, #28a745, #20c997);
         border: none;
@@ -635,6 +714,11 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                             <span class="badge <?= $is_complete ? 'bg-success' : 'bg-warning' ?> ms-2">
                                 <?= $is_complete ? 'تکمیل شده' : $completion_percentage . '% تکمیل' ?>
                             </span>
+                            <?php if (!$consistency_data['is_consistent'] && $is_complete): ?>
+                            <span class="badge bg-danger ms-2">
+                                ناسازگار
+                            </span>
+                            <?php endif; ?>
                         </h5>
                     </div>
                     <div class="card-body">
@@ -664,19 +748,24 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                                 $key2 = $criterion2['id'] . '_' . $criterion1['id'];
                                 
                                 if (isset($comparisons_array[$key1])) {
+                                    $is_inconsistent = isset($inconsistent_cells[$key1]);
                                     $display_matrix[$i][$j] = [
                                         'value' => $comparisons_array[$key1], 
-                                        'type' => 'direct'
+                                        'type' => 'direct',
+                                        'inconsistent' => $is_inconsistent
                                     ];
                                 } elseif (isset($comparisons_array[$key2])) {
+                                    $is_inconsistent = isset($inconsistent_cells[$key2]);
                                     $display_matrix[$i][$j] = [
                                         'value' => round(1 / $comparisons_array[$key2], 2), 
-                                        'type' => 'inverse'
+                                        'type' => 'inverse',
+                                        'inconsistent' => $is_inconsistent
                                     ];
                                 } else {
                                     $display_matrix[$i][$j] = [
                                         'value' => '-', 
-                                        'type' => 'empty'
+                                        'type' => 'empty',
+                                        'inconsistent' => false
                                     ];
                                 }
                             }
@@ -689,15 +778,37 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                                         <th><?= htmlspecialchars($criterion1['name']) ?></th>
                                         <?php foreach ($criteria as $j => $criterion2): 
                             $cell = $display_matrix[$i][$j];
+                            $cell_class = '';
+                            
+                            if ($cell['type'] == 'diagonal') {
+                                $cell_class = 'diagonal';
+                            } elseif ($cell['inconsistent']) {
+                                $cell_class = 'bg-danger text-white inconsistent-cell';
+                            } elseif ($cell['type'] == 'direct') {
+                                $cell_class = 'bg-light';
+                            }
                         ?>
-                                        <td class="<?= $cell['type'] == 'diagonal' ? 'diagonal' : '' ?> 
-                                  <?= $cell['type'] == 'direct' ? 'bg-light' : '' ?>">
+                                        <td class="<?= $cell_class ?>"
+                                            <?php if (isset($cell['inconsistent']) && $cell['inconsistent']): ?>
+                                            title="این مقدار باعث ناسازگاری ماتریس شده است" data-bs-toggle="tooltip"
+                                            <?php endif; ?>>
                                             <?php if ($cell['type'] == 'diagonal'): ?>
                                             <strong>1</strong>
                                             <?php elseif ($cell['type'] == 'direct'): ?>
-                                            <strong class="text-primary"><?= $cell['value'] ?></strong>
+                                            <strong
+                                                class="<?= $cell['inconsistent'] ? 'text-white' : 'text-primary' ?>">
+                                                <?= $cell['value'] ?>
+                                                <?php if ($cell['inconsistent']): ?>
+                                                <i class="bi bi-exclamation-triangle-fill ms-1"></i>
+                                                <?php endif; ?>
+                                            </strong>
                                             <?php elseif ($cell['type'] == 'inverse'): ?>
-                                            <span class="text-success"><?= $cell['value'] ?></span>
+                                            <span class="<?= $cell['inconsistent'] ? 'text-white' : 'text-success' ?>">
+                                                <?= $cell['value'] ?>
+                                                <?php if ($cell['inconsistent']): ?>
+                                                <i class="bi bi-exclamation-triangle-fill ms-1"></i>
+                                                <?php endif; ?>
+                                            </span>
                                             <?php else: ?>
                                             <span class="text-muted"><?= $cell['value'] ?></span>
                                             <?php endif; ?>
@@ -717,6 +828,7 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                                     <div class="d-flex flex-wrap gap-2">
                                         <span class="badge bg-primary">مقادیر مستقیم کاربر</span>
                                         <span class="badge bg-success">مقادیر معکوس محاسبه شده</span>
+                                        <span class="badge bg-danger">مقادیر ناسازگار</span>
                                         <span class="badge bg-secondary">قطر اصلی (1)</span>
                                         <span class="badge bg-light text-dark">مقادیر خالی</span>
                                     </div>
@@ -729,6 +841,10 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
                                         <li>تعداد مقایسه‌های انجام شده: <strong><?= $comparisons_done ?></strong></li>
                                         <li>تعداد مقایسه‌های مورد نیاز: <strong><?= $comparisons_needed ?></strong></li>
                                         <li>درصد تکمیل: <strong><?= $completion_percentage ?>%</strong></li>
+                                        <?php if (!$consistency_data['is_consistent'] && $is_complete): ?>
+                                        <li>تعداد سلول‌های ناسازگار: <strong
+                                                class="text-danger"><?= count($inconsistent_cells) ?></strong></li>
+                                        <?php endif; ?>
                                     </ul>
                                 </div>
                             </div>
@@ -1086,6 +1202,10 @@ function getUserResults($user_id, $main_matrix_id, $criteria) {
             });
         });
     });
+
+    // فعال کردن tooltip برای سلول‌های ناسازگار
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    const tool
     </script>
 
 

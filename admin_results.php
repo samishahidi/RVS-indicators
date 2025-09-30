@@ -403,6 +403,87 @@ function calculateUserWeightsAndConsistency($criteria, $comparisons_array) {
     .completion-badge {
         font-size: 0.75rem;
     }
+
+
+
+    /* استایل‌های مربوط به پرینت */
+    @media print {
+        body * {
+            visibility: hidden;
+        }
+
+        .print-section,
+        .print-section * {
+            visibility: visible;
+        }
+
+        .print-section {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            background: white;
+        }
+
+        .no-print {
+            display: none !important;
+        }
+
+        .card {
+            border: 1px solid #ddd !important;
+            box-shadow: none !important;
+        }
+
+        .table {
+            border-collapse: collapse !important;
+        }
+
+        .table-bordered th,
+        .table-bordered td {
+            border: 1px solid #ddd !important;
+        }
+
+        .bg-primary,
+        .bg-success,
+        .bg-light,
+        .bg-danger,
+        .bg-warning {
+            background-color: #f8f9fa !important;
+            color: #000 !important;
+        }
+
+        .text-primary,
+        .text-success,
+        .text-white {
+            color: #000 !important;
+        }
+
+        .progress-bar {
+            background-color: #6c757d !important;
+        }
+
+        .badge {
+            border: 1px solid #000;
+            background: white !important;
+            color: #000 !important;
+        }
+    }
+
+    .print-header {
+        text-align: center;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid #333;
+    }
+
+    .print-footer {
+        text-align: center;
+        margin-top: 30px;
+        padding-top: 15px;
+        border-top: 1px solid #ddd;
+        font-size: 12px;
+        color: #666;
+    }
     </style>
 </head>
 
@@ -505,14 +586,23 @@ function calculateUserWeightsAndConsistency($criteria, $comparisons_array) {
                     <div class="card-body">
                         <!-- دکمه حذف کاربر -->
                         <div class="mb-4">
-                            <form method="post" class="d-inline"
-                                onsubmit="return confirm('آیا از حذف این کاربر و تمام داده‌های مربوطه اطمینان دارید؟ این عمل غیرقابل بازگشت است.');">
-                                <input type="hidden" name="user_id" value="<?= $selected_user['id'] ?>">
-                                <button type="submit" name="delete_user" class="btn btn-danger">
-                                    <i class="bi bi-trash me-1"></i>
-                                    حذف کاربر و تمام داده‌ها
+                            <div class="d-flex gap-2">
+                                <!-- دکمه حذف کاربر -->
+                                <form method="post" class="d-inline"
+                                    onsubmit="return confirm('آیا از حذف این کاربر و تمام داده‌های مربوطه اطمینان دارید؟ این عمل غیرقابل بازگشت است.');">
+                                    <input type="hidden" name="user_id" value="<?= $selected_user['id'] ?>">
+                                    <button type="submit" name="delete_user" class="btn btn-danger">
+                                        <i class="bi bi-trash me-1"></i>
+                                        حذف کاربر و تمام داده‌ها
+                                    </button>
+                                </form>
+
+                                <!-- دکمه پرینت -->
+                                <button type="button" class="btn btn-primary" onclick="printUserResults()">
+                                    <i class="bi bi-printer me-1"></i>
+                                    پرینت نتایج
                                 </button>
-                            </form>
+                            </div>
                         </div>
 
                         <!-- اطلاعات کاربر -->
@@ -787,6 +877,215 @@ function calculateUserWeightsAndConsistency($criteria, $comparisons_array) {
         </div>
     </div>
 
+
+    <!-- بخش مخفی برای پرینت -->
+    <div id="printSection" class="print-section" style="display: none;">
+        <div class="print-header">
+            <h2>نتایج وزن‌دهی AHP</h2>
+            <p>تاریخ تولید: <?= date('Y/m/d H:i') ?></p>
+            <hr>
+        </div>
+
+        <!-- اطلاعات کاربر -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h4 class="card-title mb-0">
+                    <i class="bi bi-person-badge me-2"></i>
+                    اطلاعات کاربر
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <table class="table table-borderless">
+                            <tr>
+                                <td style="width: 40%;"><strong>نام و نام خانوادگی:</strong></td>
+                                <td><?= htmlspecialchars($selected_user['fullname']) ?></td>
+                            </tr>
+                            <tr>
+                                <td><strong>شماره همراه:</strong></td>
+                                <td><?= htmlspecialchars($selected_user['phone']) ?></td>
+                            </tr>
+                            <tr>
+                                <td><strong>سمت یا جایگاه:</strong></td>
+                                <td><?= htmlspecialchars($selected_user['position']) ?></td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <table class="table table-borderless">
+                            <?php if (!empty($selected_user['education'])): ?>
+                            <tr>
+                                <td style="width: 40%;"><strong>تحصیلات:</strong></td>
+                                <td><?= htmlspecialchars($selected_user['education']) ?></td>
+                            </tr>
+                            <?php endif; ?>
+                            <tr>
+                                <td><strong>تاریخ ثبت:</strong></td>
+                                <td><?= date('Y/m/d H:i', strtotime($selected_user['created_at'])) ?></td>
+                            </tr>
+                            <tr>
+                                <td><strong>وضعیت تکمیل:</strong></td>
+                                <td>
+                                    <span
+                                        class="badge <?= $user_results_data['is_complete'] ? 'bg-success' : 'bg-warning' ?>">
+                                        <?= $user_results_data['is_complete'] ? 'تکمیل شده' : 'در حال انجام' ?>
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <?php if ($user_results_data['is_complete']): ?>
+        <!-- وضعیت سازگاری -->
+        <!-- <div class="card mb-4">
+            <div class="card-header">
+                <h4 class="card-title mb-0">
+                    <i class="bi bi-graph-up me-2"></i>
+                    وضعیت سازگاری ماتریس
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <strong>لامبدا ماکزیمم (λmax):</strong><br>
+                        <span><?= $consistency_data['lambda_max'] ?></span>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>شاخص سازگاری (CI):</strong><br>
+                        <span><?= $consistency_data['ci'] ?></span>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>شاخص تصادفی (RI):</strong><br>
+                        <?= $consistency_data['ri'] ?>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>نسبت سازگاری (CR):</strong><br>
+                        <span class="<?= $consistency_data['is_consistent'] ? 'text-success' : 'text-danger' ?>">
+                            <?= $consistency_data['cr'] * 100 ?>%
+                        </span>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <strong>وضعیت:</strong>
+                    <?php if ($consistency_data['is_consistent']): ?>
+                    <span class="text-success">ماتریس سازگار است (CR ≤ 0.1)</span>
+                    <?php else: ?>
+                    <span class="text-danger">ماتریس ناسازگار است! (CR > 0.1)</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div> -->
+
+        <!-- ماتریس مقایسه‌ها -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h4 class="card-title mb-0">
+                    <i class="bi bi-table me-2"></i>
+                    ماتریس مقایسه‌های زوجی
+                </h4>
+            </div>
+            <div class="card-body">
+                <?php if ($user_results_data['comparisons_done'] > 0): ?>
+                <div class="table-responsive">
+                    <table class="matrix-table table table-bordered">
+                        <thead>
+                            <tr>
+                                <th style="width: 150px">معیارها</th>
+                                <?php foreach ($user_results_data['criteria'] as $criterion): ?>
+                                <th class="text-center"><?= htmlspecialchars($criterion['name']) ?></th>
+                                <?php endforeach; ?>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($user_results_data['criteria'] as $i => $criterion1): ?>
+                            <tr>
+                                <th><?= htmlspecialchars($criterion1['name']) ?></th>
+                                <?php foreach ($user_results_data['criteria'] as $j => $criterion2): 
+                                $cell = $user_results_data['display_matrix'][$i][$j];
+                            ?>
+                                <td class="text-center <?= $cell['type'] == 'diagonal' ? 'diagonal' : '' ?>">
+                                    <?php if ($cell['type'] == 'diagonal'): ?>
+                                    <strong>1</strong>
+                                    <?php elseif ($cell['type'] == 'direct'): ?>
+                                    <span><?= $cell['value'] ?></span>
+                                    <?php elseif ($cell['type'] == 'inverse'): ?>
+                                    <span><?= $cell['value'] ?></span>
+                                    <?php else: ?>
+                                    <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <?php endforeach; ?>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- وزن‌های نهایی -->
+        <!-- <div class="card">
+            <div class="card-header">
+                <h4 class="card-title mb-0">
+                    <i class="bi bi-bar-chart me-2"></i>
+                    وزن‌های نهایی معیارها
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>رتبه</th>
+                                <th>معیار</th>
+                                <th>وزن</th>
+                                <th>درصد</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php 
+                        $sorted_weights = [];
+                        foreach ($user_results_data['criteria'] as $i => $criterion) {
+                            $sorted_weights[] = [
+                                'criterion' => $criterion,
+                                'weight' => $user_results_data['weights'][$i],
+                                'index' => $i
+                            ];
+                        }
+                        
+                        usort($sorted_weights, function($a, $b) {
+                            return $b['weight'] <=> $a['weight'];
+                        });
+                        
+                        foreach ($sorted_weights as $rank => $item): 
+                            $criterion = $item['criterion'];
+                            $weight = $item['weight'];
+                            $percentage = round($weight * 100, 2);
+                        ?>
+                            <tr>
+                                <td><strong><?= $rank + 1 ?></strong></td>
+                                <td><?= htmlspecialchars($criterion['name']) ?></td>
+                                <td><?= round($weight, 4) ?></td>
+                                <td><?= $percentage ?>%</td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div> -->
+        <?php endif; ?>
+
+        <div class="print-footer">
+            <p>این گزارش به صورت خودکار توسط سیستم AHP تولید شده است.</p>
+        </div>
+    </div>
+
     <?php include('footer.php'); ?>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -804,6 +1103,40 @@ function calculateUserWeightsAndConsistency($criteria, $comparisons_array) {
             }, 100);
         }
         <?php endif; ?>
+    });
+
+    // تابع مدیریت پرینت
+    function printUserResults() {
+        // مخفی کردن دکمه‌ها و عناصر غیر ضروری در هنگام پرینت
+        const noPrintElements = document.querySelectorAll('.no-print');
+        noPrintElements.forEach(el => {
+            el.style.display = 'none';
+        });
+
+        // نمایش بخش پرینت
+        const printSection = document.getElementById('printSection');
+        printSection.style.display = 'block';
+
+        // پرینت گرفتن
+        window.print();
+
+        // بازگرداندن وضعیت به حالت عادی
+        setTimeout(() => {
+            printSection.style.display = 'none';
+            noPrintElements.forEach(el => {
+                el.style.display = '';
+            });
+        }, 500);
+    }
+
+    // مدیریت رویداد قبل از پرینت
+    window.addEventListener('beforeprint', function() {
+        document.body.classList.add('printing');
+    });
+
+    // مدیریت رویداد بعد از پرینت
+    window.addEventListener('afterprint', function() {
+        document.body.classList.remove('printing');
     });
     </script>
 </body>
